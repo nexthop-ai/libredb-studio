@@ -96,7 +96,7 @@
         },
         "llmProvider": {
           "type": "string",
-          "enum": ["", "gemini", "openai", "ollama", "custom"],
+          "enum": ["", "gemini", "openai", "anthropic", "ollama", "custom"],
           "description": "LLM provider"
         },
         "llmModel": {

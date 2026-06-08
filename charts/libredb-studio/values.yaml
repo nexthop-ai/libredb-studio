@@ -68,7 +68,7 @@ config:
   storageProvider: "local"
   # -- SQLite database file path (when storageProvider=sqlite)
   storageSqlitePath: "/app/data/libredb-storage.db"
-  # -- LLM provider: gemini, openai, ollama, custom (optional)
+  # -- LLM provider: gemini, openai, anthropic, ollama, custom (optional)
   llmProvider: ""
   # -- LLM model name (optional)
   llmModel: ""

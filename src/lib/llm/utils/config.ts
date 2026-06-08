@@ -14,6 +14,7 @@ export const DEFAULT_PROVIDER: LLMProviderType = 'gemini';
 export const DEFAULT_MODELS: Record<LLMProviderType, string> = {
   gemini: 'gemini-2.5-flash',
   openai: 'gpt-4o',
+  anthropic: 'claude-3-5-sonnet-latest',
   ollama: 'llama3.2',
   custom: 'gpt-3.5-turbo',
 };
@@ -21,6 +22,7 @@ export const DEFAULT_MODELS: Record<LLMProviderType, string> = {
 export const DEFAULT_API_URLS: Record<string, string> = {
   ollama: 'http://localhost:11434/v1',
   openai: 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com/v1',
 };
 
 // ============================================================================
@@ -38,7 +40,7 @@ function resolveProvider(): LLMProviderType {
     return DEFAULT_PROVIDER;
   }
 
-  const validProviders: LLMProviderType[] = ['gemini', 'openai', 'ollama', 'custom'];
+  const validProviders: LLMProviderType[] = ['gemini', 'openai', 'anthropic', 'ollama', 'custom'];
 
   if (!validProviders.includes(provider as LLMProviderType)) {
     console.error(`[LLM] Invalid provider "${provider}", falling back to "${DEFAULT_PROVIDER}"`);
@@ -80,6 +82,10 @@ function resolveApiUrl(provider: LLMProviderType): string | undefined {
     return DEFAULT_API_URLS.openai;
   }
 
+  if (provider === 'anthropic') {
+    return DEFAULT_API_URLS.anthropic;
+  }
+
   // Custom provider requires explicit URL
   if (provider === 'custom') {
     return undefined;
@@ -116,7 +122,7 @@ export function resolveConfig(overrides?: Partial<LLMConfig>): LLMConfig {
  */
 export function validateConfig(config: LLMConfig): void {
   // Validate provider
-  const validProviders: LLMProviderType[] = ['gemini', 'openai', 'ollama', 'custom'];
+  const validProviders: LLMProviderType[] = ['gemini', 'openai', 'anthropic', 'ollama', 'custom'];
   if (!validProviders.includes(config.provider)) {
     throw new LLMConfigError(
       `Invalid provider: ${config.provider}. Valid options: ${validProviders.join(', ')}`,
@@ -136,6 +142,13 @@ export function validateConfig(config: LLMConfig): void {
     throw new LLMConfigError(
       'OpenAI API key is required. Set LLM_API_KEY environment variable.',
       'openai'
+    );
+  }
+
+  if (config.provider === 'anthropic' && !config.apiKey) {
+    throw new LLMConfigError(
+      'Anthropic API key is required. Set LLM_API_KEY environment variable.',
+      'anthropic'
     );
   }
 
@@ -164,7 +177,7 @@ export function validateConfig(config: LLMConfig): void {
  * Check if a provider requires an API key
  */
 export function requiresApiKey(provider: LLMProviderType): boolean {
-  return provider === 'gemini' || provider === 'openai';
+  return provider === 'gemini' || provider === 'openai' || provider === 'anthropic';
 }
 
 /**

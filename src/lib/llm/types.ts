@@ -7,7 +7,7 @@
 // Provider Types
 // ============================================================================
 
-export type LLMProviderType = 'gemini' | 'openai' | 'ollama' | 'custom';
+export type LLMProviderType = 'gemini' | 'openai' | 'anthropic' | 'ollama' | 'custom';
 
 // ============================================================================
 // Configuration

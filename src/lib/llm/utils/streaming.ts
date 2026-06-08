@@ -117,6 +117,14 @@ function extractContent(data: unknown): string | null {
     }
   }
 
+  // Anthropic format: { type: 'content_block_delta', delta: { type: 'text_delta', text: '...' } }
+  if (obj.type === 'content_block_delta') {
+    const delta = obj.delta as Record<string, unknown> | undefined;
+    if (delta && delta.type === 'text_delta' && typeof delta.text === 'string') {
+      return delta.text;
+    }
+  }
+
   return null;
 }
 

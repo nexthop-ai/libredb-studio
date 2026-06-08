@@ -50,6 +50,11 @@ export async function createLLMProvider(config?: Partial<LLMConfig>): Promise<LL
         return new OpenAIProvider(resolvedConfig);
       }
 
+      case 'anthropic': {
+        const { AnthropicProvider } = await import('./providers/anthropic');
+        return new AnthropicProvider(resolvedConfig);
+      }
+
       case 'ollama': {
         const { OllamaProvider } = await import('./providers/ollama');
         return new OllamaProvider(resolvedConfig);
@@ -62,7 +67,7 @@ export async function createLLMProvider(config?: Partial<LLMConfig>): Promise<LL
 
       default:
         throw new LLMConfigError(
-          `Unknown provider: ${resolvedConfig.provider}. Valid options: gemini, openai, ollama, custom`,
+          `Unknown provider: ${resolvedConfig.provider}. Valid options: gemini, openai, anthropic, ollama, custom`,
           resolvedConfig.provider
         );
     }
