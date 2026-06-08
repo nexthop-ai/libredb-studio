@@ -17,5 +17,5 @@ data:
 
   # LLM provider defaults. The API key (LLM_API_KEY) is supplied via the
   # libredb-studio-secrets secret.
-  LLM_PROVIDER: "gemini"
-  LLM_MODEL: "gemini-2.5-flash"
+  LLM_PROVIDER: "anthropic"
+  LLM_MODEL: "claude-sonnet-4-6"
