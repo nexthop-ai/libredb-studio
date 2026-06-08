@@ -14,7 +14,7 @@ export const DEFAULT_PROVIDER: LLMProviderType = 'gemini';
 export const DEFAULT_MODELS: Record<LLMProviderType, string> = {
   gemini: 'gemini-2.5-flash',
   openai: 'gpt-4o',
-  anthropic: 'claude-3-5-sonnet-latest',
+  anthropic: 'claude-sonnet-4-6',
   ollama: 'llama3.2',
   custom: 'gpt-3.5-turbo',
 };
