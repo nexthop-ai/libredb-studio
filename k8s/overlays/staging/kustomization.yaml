@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
 - ../../base
 - ingress.yaml
+- external-secret.yaml
 
 images:
 - name: container-registry.sw.internal.nexthop.ai/libredb-studio
