@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: libredb-studio
+  namespace: libredb-studio
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+  - secretName: libredb-studio-tls
+    hosts:
+    - libredb-studio.k8s.us-west-1.nexthop.ai
+  rules:
+  - host: libredb-studio.k8s.us-west-1.nexthop.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: libredb-studio
+            port:
+              number: 80

@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: libredb-studio
+  namespace: libredb-studio
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: libredb-studio
+  template:
+    metadata:
+      labels:
+        app: libredb-studio
+    spec:
+      restartPolicy: Always
+      containers:
+      - name: libredb-studio
+        image: container-registry.sw.internal.nexthop.ai/libredb-studio:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3000
+          protocol: TCP
+        envFrom:
+        # Non-sensitive app config (storage provider, auth mode, LLM defaults).
+        - configMapRef:
+            name: libredb-studio-config
+        # Sensitive app config: JWT_SECRET, ADMIN_PASSWORD, USER_PASSWORD,
+        # LLM_API_KEY, and any OIDC_* values. Created out-of-band (not by
+        # apps.yaml); optional so the pod still starts during initial rollout.
+        - secretRef:
+            name: libredb-studio-secrets
+            optional: true
+        env:
+        # ── PostgreSQL ─────────────────────────────────────────────────────
+        # The libredb-studio-db-credentials secret is auto-provisioned by the
+        # app-database terraform module (apps.yaml postgres_db: true). We read
+        # its parts and assemble the connection URL the app expects. The
+        # $(VAR) values are interpolated by Kubernetes from the env vars
+        # defined above them.
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: libredb-studio-db-credentials
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            secretKeyRef:
+              name: libredb-studio-db-credentials
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: libredb-studio-db-credentials
+              key: DB_NAME
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: libredb-studio-db-credentials
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: libredb-studio-db-credentials
+              key: DB_PASSWORD
+        - name: STORAGE_POSTGRES_URL
+          value: "postgresql://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable"
+        # /api/db/health is a public (unauthenticated) route — same endpoint
+        # the Dockerfile HEALTHCHECK uses.
+        livenessProbe:
+          httpGet:
+            path: /api/db/health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/db/health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3

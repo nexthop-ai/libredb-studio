@@ -3,20 +3,26 @@
 # Optimized for Render, Railway, Fly.io, and Kubernetes
 # ==============================================================================
 
+# Build context:
+#   - Repo root (ng service build/deploy): SRC_ROOT=nhtools/services/libredb-studio (default)
+#   - Local dev (docker build from this dir): docker build --build-arg SRC_ROOT=. .
+#
 # Bun for fast dependency installation, Node.js for build
 # Bun's JIT compiler segfaults under QEMU emulation (ARM64 cross-build),
 # so we use Node.js for the Next.js build step.
 FROM oven/bun:1 AS deps
+ARG SRC_ROOT=nhtools/services/libredb-studio
 WORKDIR /usr/src/app
 RUN apt-get update && apt-get install -y python3 make g++ --no-install-recommends && rm -rf /var/lib/apt/lists/*
-COPY package.json bun.lock ./
+COPY ${SRC_ROOT}/package.json ${SRC_ROOT}/bun.lock ./
 RUN bun install --frozen-lockfile
 
 # Build with Node.js to avoid Bun/QEMU segfaults on ARM64
 FROM node:20-slim AS builder
+ARG SRC_ROOT=nhtools/services/libredb-studio
 WORKDIR /usr/src/app
 COPY --from=deps /usr/src/app/node_modules ./node_modules
-COPY . .
+COPY ${SRC_ROOT}/ .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DOCKER_BUILD=true

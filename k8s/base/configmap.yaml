@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: libredb-studio-config
+  namespace: libredb-studio
+data:
+  # Persist application data in PostgreSQL (provisioned via apps.yaml
+  # postgres_db: true). The connection URL itself is assembled in the
+  # Deployment from the libredb-studio-db-credentials secret.
+  STORAGE_PROVIDER: "postgres"
+
+  # Authentication: email/password (local) by default. Switch to "oidc"
+  # and supply OIDC_* values via the libredb-studio-secrets secret to use SSO.
+  NEXT_PUBLIC_AUTH_PROVIDER: "local"
+  ADMIN_EMAIL: "admin@nexthop.ai"
+  USER_EMAIL: "user@nexthop.ai"
+
+  # LLM provider defaults. The API key (LLM_API_KEY) is supplied via the
+  # libredb-studio-secrets secret.
+  LLM_PROVIDER: "gemini"
+  LLM_MODEL: "gemini-2.5-flash"
