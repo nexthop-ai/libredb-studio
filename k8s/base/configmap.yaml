@@ -19,3 +19,11 @@ data:
   # libredb-studio-secrets secret.
   LLM_PROVIDER: "anthropic"
   LLM_MODEL: "claude-sonnet-4-6"
+
+  # TEMPORARY: these are sensitive and belong in OpenBao (libredb-studio-secrets).
+  # They are kept here as plaintext (staging + production) until the OpenBao
+  # entries are created, then they should be removed from this ConfigMap and
+  # restored to the external-secret.yaml in each overlay.
+  JWT_SECRET: "CHANGE_ME_staging_jwt_secret_min_32_chars"
+  ADMIN_PASSWORD: "CHANGE_ME_admin_password"
+  USER_PASSWORD: "CHANGE_ME_user_password"
