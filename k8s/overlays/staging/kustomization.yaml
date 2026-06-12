@@ -6,6 +6,15 @@ resources:
 - ingress.yaml
 - external-secret.yaml
 
+# Generates the libredb-studio-seed-connections ConfigMap consumed by the
+# base Deployment (mounted at /app/config, SEED_CONFIG_PATH). The content
+# hash suffix triggers a rolling restart whenever seed-connections.yaml changes.
+configMapGenerator:
+- name: libredb-studio-seed-connections
+  namespace: libredb-studio
+  files:
+  - seed-connections.yaml
+
 images:
 - name: container-registry.sw.internal.nexthop.ai/libredb-studio
   newTag: latest

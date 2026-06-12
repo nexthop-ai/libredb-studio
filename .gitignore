@@ -94,7 +94,7 @@ testdb
 charts/*/charts/*.tgz
 
 
-seed-connections.yaml
+# seed-connections.yaml
 
 .playwright-mcp/*.png
 
