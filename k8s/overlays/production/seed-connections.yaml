@@ -13,6 +13,6 @@ connections:
     database: postgres
     user: "nh_ro"
     password: "Nexthop@24"
-    roles: ["user"]
+    roles: ["*"]
     color: "#10B981"
     environment: "staging"
