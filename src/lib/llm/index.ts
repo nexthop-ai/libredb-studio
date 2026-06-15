@@ -32,6 +32,7 @@ export type {
   LLMMessageRole,
   LLMStreamOptions,
   LLMProvider,
+  JSONSchema,
 } from './types';
 
 // ============================================================================
