@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { createLLMProvider } from '@/lib/llm';
 import { createErrorResponse } from '@/lib/api/errors';
+import { SQL_ONLY_SCHEMA } from './schema';
 
 // ============================================================================
 // System Prompt Builder
@@ -49,12 +50,10 @@ SUPPORTED OPERATIONS:
 - deleteOne/deleteMany: Delete documents matching filter
 
 GUIDELINES:
-1. Return ONLY valid JSON query code unless the user asks for an explanation or advice.
-2. Wrap JSON queries in markdown code blocks: \`\`\`json ... \`\`\`.
-3. Use proper MongoDB query operators ($eq, $gt, $lt, $in, $regex, $exists, etc.).
-4. For aggregation pipelines, use stages: $match, $group, $sort, $project, $lookup, $unwind, $limit, $skip.
-5. If the schema context is provided, use exact collection and field names.
-6. Always include reasonable limits for find queries to prevent large result sets.
+1. Use proper MongoDB query operators ($eq, $gt, $lt, $in, $regex, $exists, etc.).
+2. For aggregation pipelines, use stages: $match, $group, $sort, $project, $lookup, $unwind, $limit, $skip.
+3. If the schema context is provided, use exact collection and field names.
+4. Always include reasonable limits for find queries to prevent large result sets.
 `;
   }
 
@@ -77,12 +76,10 @@ SCHEMA INFORMATION (TOP 100 TABLES BY ROW COUNT):
 ${schemaContext || 'No specific schema provided. Ask the user for table details if needed for precise queries.'}
 
 GUIDELINES:
-1. Return ONLY pure SQL code unless the user asks for an explanation or advice.
-2. If generating SQL, wrap it in markdown code blocks: \`\`\`sql ... \`\`\`.
-3. Use standard naming conventions and ensure compatibility with ${databaseType || 'Postgres'}.
-4. Always prioritize query performance and readability.
-5. If the schema context is provided, use exact table and column names.
-6. If you notice potential schema improvements (indexes, normalization), mention them briefly if relevant.
+1. Use standard naming conventions and ensure compatibility with ${databaseType || 'Postgres'}.
+2. Always prioritize query performance and readability.
+3. If the schema context is provided, use exact table and column names.
+4. If you notice potential schema improvements (indexes, normalization), mention them briefly if relevant.
 `;
 }
 
@@ -118,7 +115,7 @@ export async function POST(req: NextRequest) {
     messages.push({ role: 'user', content: prompt });
 
     // Stream completion
-    const stream = await provider.stream({ messages });
+    const stream = await provider.stream({ messages, jsonSchema: SQL_ONLY_SCHEMA });
 
     return new Response(stream, {
       headers: {

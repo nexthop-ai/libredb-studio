@@ -79,6 +79,14 @@ export class AnthropicProvider extends BaseLLMProvider {
         max_tokens: options.maxTokens ?? DEFAULT_MAX_TOKENS,
         ...(system !== undefined && { system }),
         ...(options.temperature !== undefined && { temperature: options.temperature }),
+        ...(options.jsonSchema !== undefined && {
+          output_config: {
+            format: {
+              type: 'json_schema',
+              schema: options.jsonSchema,
+            },
+          },
+        }),
       }),
     });
 

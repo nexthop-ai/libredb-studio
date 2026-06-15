@@ -35,11 +35,23 @@ export interface LLMMessage {
 // Stream Options
 // ============================================================================
 
+/**
+ * A JSON Schema object describing the desired structured output shape.
+ * Passed through verbatim to providers that support structured outputs.
+ */
+export type JSONSchema = Record<string, unknown>;
+
 export interface LLMStreamOptions {
   messages: LLMMessage[];
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  /**
+   * Optional JSON Schema for structured outputs. When provided, supported
+   * providers constrain the response to valid JSON matching this schema.
+   * Currently honored only by the Anthropic provider; other providers ignore it.
+   */
+  jsonSchema?: JSONSchema;
 }
 
 // ============================================================================

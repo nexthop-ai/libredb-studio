@@ -332,8 +332,9 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
     if (editorRef.current) {
       editorRef.current.setValue(val);
       lastSyncedValueRef.current = val;
+      handleFormat();
     }
-  }, []);
+  }, [handleFormat]);
 
   const {
     showAi,
