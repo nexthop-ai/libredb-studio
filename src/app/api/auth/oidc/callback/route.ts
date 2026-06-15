@@ -51,6 +51,7 @@ export async function GET(request: Request) {
       oidcState.nonce
     );
 
+    logger.info("Claims:", {claims : claims})
     if (!claims) {
       logger.warn('OIDC callback: no claims returned from token exchange', { route: 'oidc/callback' });
       return NextResponse.redirect(`${origin}/login?error=oidc_no_claims`);
