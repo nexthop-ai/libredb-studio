@@ -25,6 +25,14 @@ export interface StorageData {
   threshold_config: ThresholdConfig[];
 }
 
+/** An access group that gates which db connections a user can reach */
+export interface StorageGroup {
+  id: string;
+  name: string;
+  /** Members of this group are admin users */
+  isAdmin: boolean;
+}
+
 /** Collection names that can be synced to server storage */
 export type StorageCollection = keyof StorageData;
 
@@ -48,14 +56,38 @@ export const STORAGE_COLLECTIONS: StorageCollection[] = [
 export interface ServerStorageProvider {
   /** Create tables if they don't exist */
   initialize(): Promise<void>;
-  /** Get all collections for a user */
-  getAllData(userId: string): Promise<Partial<StorageData>>;
-  /** Get a single collection for a user */
-  getCollection<K extends StorageCollection>(userId: string, collection: K): Promise<StorageData[K] | null>;
-  /** Set a single collection for a user */
-  setCollection<K extends StorageCollection>(userId: string, collection: K, data: StorageData[K]): Promise<void>;
-  /** Merge multiple collections (used for migration) */
-  mergeData(userId: string, data: Partial<StorageData>): Promise<void>;
+  /**
+   * Get a user's data merged with the db connections they can access.
+   *
+   * Returns the `data` blob from the `user` table plus the connections the
+   * user can reach via their group memberships (`user_group_mapping` →
+   * `group` → `db_connection`), resolved in a single join. `userId` is the
+   * `user.id` surrogate key. The result is shaped the same as the legacy
+   * `getAllData` (a `Partial<StorageData>`).
+   */
+  getUserData(userId: string): Promise<Partial<StorageData>>;
+  /** Create a user row for `email` (no-op if it already exists); returns the user's `id` */
+  createUser(email: string): Promise<string>;
+  /**
+   * Whether the user is an admin — true if their email is in the `ADMIN_USERS`
+   * env list, or if they belong to any group flagged `isAdmin`.
+   */
+  isAdmin(userId: string): Promise<boolean>;
+  /** List all access groups */
+  getGroups(): Promise<StorageGroup[]>;
+  /** Upsert access groups into the `group` table */
+  createGroups(groups: StorageGroup[]): Promise<void>;
+  /**
+   * Set a user's group memberships to exactly `groupIds`: inserts any that are
+   * missing and removes any existing mapping not in the list.
+   */
+  mapUserToGroup(userId: string, groupIds: string[]): Promise<void>;
+  /** Upsert db connections (each carries its own `group`) into the `db_connection` table */
+  setDbConnections(connections: DatabaseConnection[]): Promise<void>;
+  /** Set a user's `data` blob in the `user` table (keyed by `user.id`) */
+  setUserData(userId: string, data: StorageData): Promise<void>;
+  // /** Merge multiple collections (used for migration) */
+  // mergeData(userId: string, data: Partial<StorageData>): Promise<void>;
   /** Health check */
   isHealthy(): Promise<boolean>;
   /** Cleanup resources */

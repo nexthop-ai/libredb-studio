@@ -3,8 +3,8 @@
  * Uses the existing `pg` package (already a project dependency).
  */
 
-import type { ServerStorageProvider, StorageCollection, StorageData } from '../types';
-import { STORAGE_COLLECTIONS } from '../types';
+import type { ServerStorageProvider, StorageData, StorageGroup } from '../types';
+import type { DatabaseConnection } from '@/lib/types';
 import { logger } from '@/lib/logger';
 
 let Pool: typeof import('pg').Pool;
@@ -38,15 +38,46 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       ssl: this.buildSSLConfig(),
     });
 
-    // Create table
+    // Create tables (order matters: referenced tables before FKs).
     try {
+      // Access groups: id + human-readable name. `is_admin` marks groups
+      // whose members are admin users.
       await this.pool.query(`
-        CREATE TABLE IF NOT EXISTS user_storage (
-          user_id    TEXT NOT NULL,
-          collection TEXT NOT NULL,
+        CREATE TABLE IF NOT EXISTS "group" (
+          id       TEXT PRIMARY KEY,
+          name     TEXT NOT NULL,
+          is_admin BOOLEAN NOT NULL DEFAULT FALSE
+        )
+      `);
+
+      // Per-user data blob (StorageData minus connections). `id` is the
+      // surrogate key used everywhere; `email` is a unique natural key.
+      await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS "user" (
+          id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          email      TEXT NOT NULL UNIQUE,
           data       TEXT NOT NULL,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          PRIMARY KEY (user_id, collection)
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+
+      // Which user belongs to which group (composite PK).
+      await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS user_group_mapping (
+          user_id  UUID NOT NULL REFERENCES "user"(id),
+          group_id TEXT NOT NULL REFERENCES "group"(id),
+          PRIMARY KEY (user_id, group_id)
+        )
+      `);
+
+      // Each db connection lives in its own row and references the group that
+      // is allowed to access it; the full DatabaseConnection is stored as JSON.
+      await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS db_connection (
+          id         TEXT PRIMARY KEY,
+          group_id   TEXT REFERENCES "group"(id),
+          data       TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
     } catch (error) {
@@ -61,75 +92,106 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     }
   }
 
-  async getAllData(userId: string): Promise<Partial<StorageData>> {
+  async getUserData(userId: string): Promise<Partial<StorageData>> {
     this.ensurePool();
+
+    // Single join: user blob + every connection reachable through the user's
+    // group memberships (user_group_mapping -> group -> db_connection).
     const { rows } = await this.pool!.query(
-      'SELECT collection, data FROM user_storage WHERE user_id = $1',
+      `SELECT u.data AS user_data, dc.data AS connection_data
+         FROM "user" u
+         LEFT JOIN user_group_mapping ugm ON ugm.user_id = u.id
+         LEFT JOIN db_connection dc ON dc.group_id = ugm.group_id
+        WHERE u.id = $1`,
       [userId]
     );
 
     const result: Partial<StorageData> = {};
+    if (rows.length === 0) return result;
+
+    // user_data is identical across the joined rows; parse it once.
+    try {
+      Object.assign(result, JSON.parse(rows[0].user_data));
+    } catch {
+      logger.warn('Skipping corrupted user storage data', { provider: 'postgres', userId });
+    }
+
+    const connections: DatabaseConnection[] = [];
     for (const row of rows) {
+      if (!row.connection_data) continue;
       try {
-        (result as Record<string, unknown>)[row.collection] = JSON.parse(
-          row.data
-        );
+        connections.push(JSON.parse(row.connection_data) as DatabaseConnection);
       } catch {
-        logger.warn('Skipping corrupted storage data', { provider: 'postgres', collection: row.collection });
+        logger.warn('Skipping corrupted db connection data', { provider: 'postgres' });
       }
     }
+    result.connections = connections;
+
     return result;
   }
 
-  async getCollection<K extends StorageCollection>(
-    userId: string,
-    collection: K
-  ): Promise<StorageData[K] | null> {
+  async createUser(email: string): Promise<string> {
+    this.ensurePool();
+    // The no-op `DO UPDATE` lets us return the id whether the row was just
+    // inserted or already existed.
+    const { rows } = await this.pool!.query(
+      `INSERT INTO "user" (email, data)
+       VALUES ($1, '{}')
+       ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+       RETURNING id`,
+      [email]
+    );
+    return rows[0].id as string;
+  }
+
+  async isAdmin(userId: string): Promise<boolean> {
     this.ensurePool();
     const { rows } = await this.pool!.query(
-      'SELECT data FROM user_storage WHERE user_id = $1 AND collection = $2',
-      [userId, collection]
+      `SELECT u.email,
+              EXISTS (
+                SELECT 1
+                  FROM user_group_mapping ugm
+                  JOIN "group" g ON g.id = ugm.group_id
+                 WHERE ugm.user_id = u.id AND g.is_admin = TRUE
+              ) AS in_admin_group
+         FROM "user" u
+        WHERE u.id = $1`,
+      [userId]
     );
-    if (rows.length === 0) return null;
-    try {
-      return JSON.parse(rows[0].data) as StorageData[K];
-    } catch {
-      logger.warn('Corrupted data in storage collection', { provider: 'postgres', collection });
-      return null;
-    }
+    if (rows.length === 0) return false;
+    if (rows[0].in_admin_group) return true;
+
+    const adminEmails = (process.env.ADMIN_USERS ?? '')
+      .split(',')
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean);
+    return adminEmails.includes(String(rows[0].email).toLowerCase());
   }
 
-  async setCollection<K extends StorageCollection>(
-    userId: string,
-    collection: K,
-    data: StorageData[K]
-  ): Promise<void> {
+  async getGroups(): Promise<StorageGroup[]> {
     this.ensurePool();
-    await this.pool!.query(
-      `INSERT INTO user_storage (user_id, collection, data, updated_at)
-       VALUES ($1, $2, $3, NOW())
-       ON CONFLICT (user_id, collection)
-       DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-      [userId, collection, JSON.stringify(data)]
+    const { rows } = await this.pool!.query(
+      'SELECT id, name, is_admin FROM "group"'
+    );
+    return rows.map(
+      (row) =>
+        ({ id: row.id, name: row.name, isAdmin: row.is_admin }) as StorageGroup
     );
   }
 
-  async mergeData(userId: string, data: Partial<StorageData>): Promise<void> {
+  async createGroups(groups: StorageGroup[]): Promise<void> {
     this.ensurePool();
     const client = await this.pool!.connect();
     try {
       await client.query('BEGIN');
-      for (const collection of STORAGE_COLLECTIONS) {
-        const collectionData = (data as Record<string, unknown>)[collection];
-        if (collectionData !== undefined) {
-          await client.query(
-            `INSERT INTO user_storage (user_id, collection, data, updated_at)
-             VALUES ($1, $2, $3, NOW())
-             ON CONFLICT (user_id, collection)
-             DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-            [userId, collection, JSON.stringify(collectionData)]
-          );
-        }
+      for (const group of groups) {
+        await client.query(
+          `INSERT INTO "group" (id, name, is_admin)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (id)
+           DO UPDATE SET name = EXCLUDED.name, is_admin = EXCLUDED.is_admin`,
+          [group.id, group.name, group.isAdmin]
+        );
       }
       await client.query('COMMIT');
     } catch (err) {
@@ -139,6 +201,96 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       client.release();
     }
   }
+
+  async mapUserToGroup(userId: string, groupIds: string[]): Promise<void> {
+    this.ensurePool();
+    const client = await this.pool!.connect();
+    try {
+      await client.query('BEGIN');
+      // Drop memberships no longer wanted (with an empty list this clears all).
+      await client.query(
+        `DELETE FROM user_group_mapping
+          WHERE user_id = $1 AND NOT (group_id = ANY($2))`,
+        [userId, groupIds]
+      );
+      // Add any missing memberships.
+      for (const groupId of groupIds) {
+        await client.query(
+          `INSERT INTO user_group_mapping (user_id, group_id)
+           VALUES ($1, $2)
+           ON CONFLICT (user_id, group_id) DO NOTHING`,
+          [userId, groupId]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async setDbConnections(connections: DatabaseConnection[]): Promise<void> {
+    this.ensurePool();
+    const client = await this.pool!.connect();
+    try {
+      await client.query('BEGIN');
+      for (const connection of connections) {
+        await client.query(
+          `INSERT INTO db_connection (id, group_id, data, updated_at)
+           VALUES ($1, $2, $3, NOW())
+           ON CONFLICT (id)
+           DO UPDATE SET group_id = EXCLUDED.group_id, data = EXCLUDED.data, updated_at = NOW()`,
+          [connection.id, connection.group ?? null, JSON.stringify(connection)]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async setUserData(userId: string, data: StorageData): Promise<void> {
+    this.ensurePool();
+    // `email` is NOT NULL, so a row must already exist (created with its email
+    // elsewhere); this only refreshes the data blob keyed by the surrogate id.
+    await this.pool!.query(
+      `UPDATE "user"
+          SET data = $2, updated_at = NOW()
+        WHERE id = $1`,
+      [userId, JSON.stringify(data)]
+    );
+  }
+
+  // async mergeData(userId: string, data: Partial<StorageData>): Promise<void> {
+  //   this.ensurePool();
+  //   const client = await this.pool!.connect();
+  //   try {
+  //     await client.query('BEGIN');
+  //     for (const collection of STORAGE_COLLECTIONS) {
+  //       const collectionData = (data as Record<string, unknown>)[collection];
+  //       if (collectionData !== undefined) {
+  //         await client.query(
+  //           `INSERT INTO user_storage (user_id, collection, data, updated_at)
+  //            VALUES ($1, $2, $3, NOW())
+  //            ON CONFLICT (user_id, collection)
+  //            DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+  //           [userId, collection, JSON.stringify(collectionData)]
+  //         );
+  //       }
+  //     }
+  //     await client.query('COMMIT');
+  //   } catch (err) {
+  //     await client.query('ROLLBACK');
+  //     throw err;
+  //   } finally {
+  //     client.release();
+  //   }
+  // }
 
   async isHealthy(): Promise<boolean> {
     try {
