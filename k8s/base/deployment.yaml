@@ -71,6 +71,16 @@ spec:
               key: DB_PASSWORD
         - name: STORAGE_POSTGRES_URL
           value: "postgresql://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable"
+        # ── Seed connections ───────────────────────────────────────────────
+        # Pre-configured DB connections loaded at startup. The YAML is mounted
+        # from the libredb-studio-seed-connections ConfigMap (generated per
+        # overlay from that overlay's seed-connections.yaml).
+        - name: SEED_CONFIG_PATH
+          value: "/app/config/seed-connections.yaml"
+        volumeMounts:
+        - name: seed-config
+          mountPath: /app/config
+          readOnly: true
         # /api/db/health is a public (unauthenticated) route — same endpoint
         # the Dockerfile HEALTHCHECK uses.
         livenessProbe:
@@ -89,3 +99,7 @@ spec:
           periodSeconds: 5
           timeoutSeconds: 3
           failureThreshold: 3
+      volumes:
+      - name: seed-config
+        configMap:
+          name: libredb-studio-seed-connections

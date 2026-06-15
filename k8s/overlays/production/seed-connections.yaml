@@ -1,0 +1,18 @@
+version: "1"
+
+defaults:
+  managed: true
+  environment: production
+
+connections:
+  - id: "staging-mfg"
+    name: "MFG DB"
+    type: postgres
+    host: chalice-test.cxegay0qumzp.us-west-2.rds.amazonaws.com
+    port: 5432
+    database: postgres
+    user: "nh_ro"
+    password: "Nexthop@24"
+    roles: ["*"]
+    color: "#10B981"
+    environment: "staging"
