@@ -682,7 +682,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(({
         )}
       </AnimatePresence>
 
-      <div className="flex-1 relative">
+      <div className="flex-1 min-h-0 relative">
         <Editor
           height="100%"
           language={language}
