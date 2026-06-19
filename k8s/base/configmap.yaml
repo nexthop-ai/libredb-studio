@@ -13,6 +13,7 @@ data:
   # and supply OIDC_* values via the libredb-studio-secrets secret to use SSO.
   NEXT_PUBLIC_AUTH_PROVIDER: "oidc"
   OIDC_ISSUER: https://sso.nexthop.ai
+  OIDC_SCOPE: openid profile email groups
   
   ADMIN_EMAIL: "admin@nexthop.ai"
   USER_EMAIL: "user@nexthop.ai"
