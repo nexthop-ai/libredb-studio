@@ -17,6 +17,6 @@ export async function GET() {
       );
     }
 
-  let userId = await provider.upsertUser(session.username, session.groups);
+  let userId = await provider.upsertUser(session.username, session.groups, session.role);
   return NextResponse.json({ authenticated: true, user: session });
 }
