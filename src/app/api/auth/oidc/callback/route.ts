@@ -51,7 +51,6 @@ export async function GET(request: Request) {
       oidcState.nonce
     );
 
-    logger.info("Claims:", {claims : claims})
     if (!claims) {
       logger.warn('OIDC callback: no claims returned from token exchange', { route: 'oidc/callback' });
       return NextResponse.redirect(`${origin}/login?error=oidc_no_claims`);
@@ -65,8 +64,9 @@ export async function GET(request: Request) {
     );
 
     // Create local JWT session (same as password login)
-    const username = claims.email || claims.preferred_username || claims.sub || role;
-    await login(role, username);
+    const username = claims.email || claims.preferred_username;
+    const groups = claims.groups || [];
+    await login(role, groups, username);
 
     // Clean up state cookie
     cookieStore.delete('oidc-state');

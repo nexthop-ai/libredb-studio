@@ -52,7 +52,7 @@ export interface DatabaseConnection {
   createdAt: Date;
   color?: string;
   environment?: ConnectionEnvironment;
-  group?: string;
+  group?: number;
   ssl?: SSLConfig;
   sshTunnel?: SSHTunnelConfig;
   serviceName?: string;   // Oracle: service name (e.g. ORCL, XEPDB1)

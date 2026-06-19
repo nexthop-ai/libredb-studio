@@ -24,7 +24,11 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const data = await provider.getAllData(session.username);
+    const userId = await provider.userExists(session.username);
+    if(!userId){
+      return createErrorResponse(`user ${session.username} does not exists`, { route: 'GET /api/storage' });
+    }
+    const data = await provider.getUserData(userId);
     return NextResponse.json(data);
   } catch (error) {
     return createErrorResponse(error, { route: 'GET /api/storage' });

@@ -36,7 +36,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await provider.mergeData(session.username, body);
+    // Connections are stored separately from the per-user data blob.
+    const { connections, ...rest } = body;
+
+    const userId = await provider.userExists(session.username);
+    if(!userId){
+      return createErrorResponse(`user ${session.username} does not exists`, { route: 'POST /api/storage/migrate' })
+    }
+
+    if (connections) {
+      await provider.setDbConnections(connections);
+    }
+    await provider.setUserData(userId, rest as StorageData);
 
     return NextResponse.json({ ok: true, migrated: Object.keys(body) });
   } catch (error) {

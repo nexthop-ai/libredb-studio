@@ -7,7 +7,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { getStorageProvider } from '@/lib/storage/factory';
-import { STORAGE_COLLECTIONS, type StorageCollection } from '@/lib/storage/types';
+import { STORAGE_COLLECTIONS, type StorageCollection, type StorageData } from '@/lib/storage/types';
+import type { DatabaseConnection } from '@/lib/types';
 import { createErrorResponse } from '@/lib/api/errors';
 
 export async function PUT(
@@ -54,11 +55,24 @@ export async function PUT(
       );
     }
 
-    await provider.setCollection(
-      session.username,
-      collection as StorageCollection,
-      body.data
-    );
+    const col = collection as StorageCollection;
+
+    if (col === 'connections') {
+      // Connections live in their own table, keyed by group rather than user.
+      await provider.setDbConnections(body.data as DatabaseConnection[]);
+    } else {
+      // Everything else is part of the per-user data blob. Read-modify-write
+      // the single collection so the rest of the blob is preserved; connections
+      // are stripped since they are stored separately.
+      const userId = await provider.userExists(session.username);
+      if(!userId){
+        return createErrorResponse(`user ${session.username} does not exists`, { route: 'PUT /api/storage/[collection]' });
+      }
+      const current = await provider.getUserData(userId);
+      delete current.connections;
+      const next = { ...current, [col]: body.data } as StorageData;
+      await provider.setUserData(userId, next);
+    }
 
     return NextResponse.json({ ok: true });
   } catch (error) {

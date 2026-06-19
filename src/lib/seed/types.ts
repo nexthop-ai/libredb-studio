@@ -40,7 +40,7 @@ export const SeedConnectionSchema = z.object({
   password: z.string().optional(),
   connectionString: z.string().optional(),
   environment: ConnectionEnvironmentSchema.optional(),
-  group: z.string().max(64).optional(),
+  group: z.number().int().optional(),
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
   roles: z.array(AllowedRoleSchema).min(1, 'At least one role is required'),
   managed: z.boolean().optional(),

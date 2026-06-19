@@ -114,6 +114,7 @@ export interface OIDCClaims {
   sub: string;
   email?: string;
   preferred_username?: string;
+  groups?: string[]
   [claim: string]: unknown;
 }
 
