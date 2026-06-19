@@ -128,18 +128,20 @@ export function useAiChat(deps: AiChatDeps): AiChatState {
           setEditorValue(fullAiResponse);
           rafId = null;
         };
+        let output = "";
 
         while (true) {
           const { done, value: chunkValue } = await reader.read();
           if (done) break;
           const chunk = new TextDecoder().decode(chunkValue);
-          fullAiResponse += chunk;
+          output += chunk;
 
           // Schedule update on next animation frame if not already scheduled
           if (!rafId) {
             rafId = requestAnimationFrame(updateEditor);
           }
         }
+        fullAiResponse += JSON.parse(output)?.sql;
 
         // Ensure final content is set and cancel any pending RAF
         if (rafId) {
