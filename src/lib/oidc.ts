@@ -9,8 +9,7 @@ export interface OIDCConfig {
   clientId: string;
   clientSecret: string;
   scope: string;
-  roleClaim: string;
-  adminRoles: string[];
+  adminGroups: string[];
 }
 
 export interface OIDCState {
@@ -37,12 +36,15 @@ export function getOIDCConfig(): OIDCConfig {
     clientId,
     clientSecret,
     scope: process.env.OIDC_SCOPE || 'openid profile email',
-    roleClaim: process.env.OIDC_ROLE_CLAIM || '',
-    adminRoles: (process.env.OIDC_ADMIN_ROLES || 'admin')
+    adminGroups: (process.env.OIDC_ADMIN_GROUPS || 'does_not_exists')
       .split(',')
       .map((r) => r.trim())
       .filter(Boolean),
   };
+}
+
+export function getAdminUserEmail(): string[] {
+  return process.env.ADMIN_USERS.split(',').map((email: string) => email.trim()).filter(Boolean);
 }
 
 // ─── Discovery (cached) ────────────────────────────────────────────────────
@@ -149,33 +151,21 @@ export async function exchangeCode(
  * Returns 'admin' if any claim value matches OIDC_ADMIN_ROLES, otherwise 'user'.
  */
 export function mapOIDCRole(
-  claims: Record<string, unknown>,
-  roleClaim: string,
-  adminRoles: string[]
+  claims: OIDCClaims,
+  adminGroups: string[],
+  adminUsers: string[]
 ): 'admin' | 'user' {
-  if (!roleClaim) return 'user';
 
   // Navigate dot-notation path
-  const parts = roleClaim.split('.');
-  let value: unknown = claims;
-  for (const part of parts) {
-    if (value == null || typeof value !== 'object') return 'user';
-    value = (value as Record<string, unknown>)[part];
+  const groups = claims.groups;
+  const email = claims.email;
+  if (email && adminUsers.includes(email)) {
+    return 'admin';
   }
-
-  if (value == null) return 'user';
-
-  // Normalize to array of strings
-  const values: string[] = Array.isArray(value)
-    ? value.map(String)
-    : [String(value)];
-
-  // Check if any value matches admin roles
-  const isAdmin = values.some((v) =>
-    adminRoles.some((ar) => v.toLowerCase() === ar.toLowerCase())
-  );
-
-  return isAdmin ? 'admin' : 'user';
+  if (groups && groups.some((g) => adminGroups.includes(g))) {
+    return 'admin';
+  }
+  return 'user';
 }
 
 // ─── State Cookie Encryption ───────────────────────────────────────────────

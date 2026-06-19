@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { login } from '@/lib/auth';
 import {
   getOIDCConfig,
+  getAdminUserEmail,
   discoverProvider,
   exchangeCode,
   decryptState,
@@ -56,11 +57,12 @@ export async function GET(request: Request) {
       return NextResponse.redirect(`${origin}/login?error=oidc_no_claims`);
     }
 
+    const adminUsers = getAdminUserEmail();
     // Map role from claims
     const role = mapOIDCRole(
-      claims as Record<string, unknown>,
-      oidcConfig.roleClaim,
-      oidcConfig.adminRoles
+      claims,
+      oidcConfig.adminGroups,
+      adminUsers
     );
 
     // Create local JWT session (same as password login)

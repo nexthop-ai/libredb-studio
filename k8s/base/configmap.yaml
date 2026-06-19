@@ -17,6 +17,8 @@ data:
   
   ADMIN_EMAIL: "admin@nexthop.ai"
   USER_EMAIL: "user@nexthop.ai"
+  ADMIN_USERS: "bhupendra@nexthop.ai, jeffc@nexthop.ai"
+  OIDC_ADMIN_GROUPS: "not_yet_configured"
 
   # LLM provider defaults. The API key (LLM_API_KEY) is supplied via the
   # libredb-studio-secrets secret.
