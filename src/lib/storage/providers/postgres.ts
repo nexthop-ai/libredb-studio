@@ -322,31 +322,6 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     );
   }
 
-  // async mergeData(userId: string, data: Partial<StorageData>): Promise<void> {
-  //   this.ensurePool();
-  //   const client = await this.pool!.connect();
-  //   try {
-  //     await client.query('BEGIN');
-  //     for (const collection of STORAGE_COLLECTIONS) {
-  //       const collectionData = (data as Record<string, unknown>)[collection];
-  //       if (collectionData !== undefined) {
-  //         await client.query(
-  //           `INSERT INTO user_storage (user_id, collection, data, updated_at)
-  //            VALUES ($1, $2, $3, NOW())
-  //            ON CONFLICT (user_id, collection)
-  //            DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-  //           [userId, collection, JSON.stringify(collectionData)]
-  //         );
-  //       }
-  //     }
-  //     await client.query('COMMIT');
-  //   } catch (err) {
-  //     await client.query('ROLLBACK');
-  //     throw err;
-  //   } finally {
-  //     client.release();
-  //   }
-  // }
 
   async isHealthy(): Promise<boolean> {
     try {
