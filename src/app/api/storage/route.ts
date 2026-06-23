@@ -28,7 +28,7 @@ export async function GET() {
     if(!userId){
       return createErrorResponse(`user ${session.username} does not exists`, { route: 'GET /api/storage' });
     }
-    const data = await provider.getUserData(userId);
+    const data = await provider.getUserData(userId, session.groups ?? []);
     return NextResponse.json(data);
   } catch (error) {
     return createErrorResponse(error, { route: 'GET /api/storage' });

@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { DatabaseConnection, DatabaseType, ConnectionEnvironment, ENVIRONMENT_COLORS, SSLMode, SSLConfig, SSHTunnelConfig } from '@/lib/types';
-import type { StorageGroup } from '@/lib/storage/types';
 import { getDBConfig } from '@/lib/db-ui-config';
 import { parseConnectionString } from '@/lib/connection-string-parser';
+import { useAuth } from './use-auth';
 
 interface UseConnectionFormProps {
   isOpen: boolean;
@@ -31,8 +31,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   const [pasteInput, setPasteInput] = useState('');
   const [showPasteInput, setShowPasteInput] = useState(false);
 
-  const [group, setGroup] = useState<number | undefined>(undefined);
-  const [availableGroups, setAvailableGroups] = useState<StorageGroup[]>([]);
+  const [group, setGroup] = useState<string | undefined>(undefined);
+  const [availableGroups, setAvailableGroups] = useState<string[]>([]);
 
   // SSL/TLS
   const [showSSL, setShowSSL] = useState(false);
@@ -58,6 +58,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   const [sshPassphrase, setSSHPassphrase] = useState('');
 
   const isEditMode = !!editConnection;
+
+  const {user: currentUser} = useAuth()
 
   // Populate form when editing
   useEffect(() => {
@@ -111,17 +113,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   // Fetch the user's access groups while the form is open.
   useEffect(() => {
     if (!isOpen) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const response = await fetch('/api/storage/groups');
-        const data = await response.json();
-        if (!cancelled && Array.isArray(data.groups)) setAvailableGroups(data.groups);
-      } catch {
-        // Ignore transient network errors — the dropdown stays empty.
-      }
-    })();
-    return () => { cancelled = true; };
+    setAvailableGroups(currentUser?.groups || []);
   }, [isOpen]);
 
   // Reset form when modal closes

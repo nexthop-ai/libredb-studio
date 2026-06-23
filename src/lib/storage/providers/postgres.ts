@@ -3,7 +3,7 @@
  * Uses the existing `pg` package (already a project dependency).
  */
 
-import type { ServerStorageProvider, StorageData, StorageGroup } from '../types';
+import type { ServerStorageProvider, StorageData } from '../types';
 import type { DatabaseConnection } from '@/lib/types';
 import { logger } from '@/lib/logger';
 
@@ -38,17 +38,8 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       ssl: this.buildSSLConfig(),
     });
 
-    // Create tables (order matters: referenced tables before FKs).
+    // Create tables
     try {
-      // Access groups: id + human-readable name.
-      await this.pool.query(`
-        CREATE TABLE IF NOT EXISTS user_group (
-          id       INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-          name     TEXT NOT NULL UNIQUE,
-          active   BOOLEAN NOT NULL DEFAULT TRUE
-        )
-      `);
-
       // Per-user data blob (StorageData minus connections). `id` is the
       // surrogate key used everywhere; `email` is a unique natural key.
       // `role` records whether the user is an admin or a regular user.
@@ -62,21 +53,10 @@ export class PostgresStorageProvider implements ServerStorageProvider {
         )
       `);
 
-      // Which user belongs to which group (composite PK).
-      await this.pool.query(`
-        CREATE TABLE IF NOT EXISTS user_group_mapping (
-          user_id  UUID NOT NULL REFERENCES app_user(id),
-          group_id INTEGER NOT NULL REFERENCES user_group(id),
-          PRIMARY KEY (user_id, group_id)
-        )
-      `);
-
-      // Each db connection lives in its own row and references the group that
-      // is allowed to access it; the full DatabaseConnection is stored as JSON.
       await this.pool.query(`
         CREATE TABLE IF NOT EXISTS db_connection (
           id         TEXT PRIMARY KEY,
-          group_id   INTEGER NOT NULL REFERENCES user_group(id),
+          user_group TEXT,
           data       TEXT NOT NULL,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
@@ -93,32 +73,36 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     }
   }
 
-  async getUserData(userId: string): Promise<Partial<StorageData>> {
+  async getUserData(userId: string, groups: string[] = []): Promise<Partial<StorageData>> {
     this.ensurePool();
 
-    // Single join: user blob + every connection reachable through the user's
-    // group memberships (user_group_mapping -> group -> db_connection).
-    const { rows } = await this.pool!.query(
-      `SELECT u.data AS user_data, dc.data AS connection_data
-         FROM app_user u
-         LEFT JOIN user_group_mapping ugm ON ugm.user_id = u.id
-         LEFT JOIN db_connection dc ON dc.group_id = ugm.group_id
-        WHERE u.id = $1`,
+    // The per-user data blob, fetched on its own.
+    const { rows: userRows } = await this.pool!.query(
+      `SELECT data AS user_data FROM app_user WHERE id = $1`,
       [userId]
     );
 
     const result: Partial<StorageData> = {};
-    if (rows.length === 0) return result;
+    if (userRows.length === 0) return result;
 
-    // user_data is identical across the joined rows; parse it once.
     try {
-      Object.assign(result, JSON.parse(rows[0].user_data));
+      Object.assign(result, JSON.parse(userRows[0].user_data));
     } catch {
       logger.warn('Skipping corrupted user storage data', { provider: 'postgres', userId });
     }
 
+    // Connections the caller can reach: those whose `user_group` matches one of
+    // the groups supplied by the identity provider, plus ungrouped (NULL) ones,
+    // which are visible to everyone.
+    const { rows: connRows } = await this.pool!.query(
+      `SELECT data AS connection_data
+         FROM db_connection
+        WHERE user_group IS NULL OR user_group = ANY($1)`,
+      [groups]
+    );
+
     const connections: DatabaseConnection[] = [];
-    for (const row of rows) {
+    for (const row of connRows) {
       if (!row.connection_data) continue;
       try {
         connections.push(JSON.parse(row.connection_data) as DatabaseConnection);
@@ -131,24 +115,8 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     return result;
   }
 
-  async upsertUser(email: string, groups: string[], role: 'admin' | 'user'): Promise<string> {
-    const alreadyExists = await this.userExists(email);
-    if (alreadyExists){
-      // Refresh the role so it tracks the latest value from the session.
-      await this.pool!.query(
-        `UPDATE app_user SET role = $2 WHERE id = $1`,
-        [alreadyExists, role]
-      );
-      const groupIds = await this.createGroups(groups.map((group) => {
-        return { name: group, active: true } as StorageGroup;
-      }));
-      await this.mapUserToGroup(alreadyExists, groupIds);
-      return alreadyExists;
-    }
-
+  async upsertUser(email: string, role: 'admin' | 'user'): Promise<string> {
     this.ensurePool();
-    // The `DO UPDATE` lets us return the id (and keep `role` current) whether
-    // the row was just inserted or already existed.
     const { rows } = await this.pool!.query(
       `INSERT INTO app_user (email, data, role)
        VALUES ($1, '{}', $2)
@@ -156,11 +124,6 @@ export class PostgresStorageProvider implements ServerStorageProvider {
        RETURNING id`,
       [email, role]
     );
-    const userId = rows[0].id as string;
-    const groupIds = await this.createGroups(groups.map((group) => {
-      return { name: group, active: true } as StorageGroup;
-    }));
-    await this.mapUserToGroup(userId, groupIds);
     return rows[0].id as string;
   }
 
@@ -196,97 +159,6 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     return adminEmails.includes(String(rows[0].email).toLowerCase());
   }
 
-  async getGroups(): Promise<StorageGroup[]> {
-    this.ensurePool();
-    const { rows } = await this.pool!.query(
-      'SELECT id, name, active FROM user_group'
-    );
-    return rows.map(
-      (row) =>
-        ({
-          id: row.id,
-          name: row.name,
-          active: row.active,
-        }) as StorageGroup
-    );
-  }
-
-  async getGroupsByUserId(userId: string): Promise<StorageGroup[]> {
-    this.ensurePool();
-    const { rows } = await this.pool!.query(
-      `SELECT g.id, g.name, g.active
-         FROM user_group_mapping ugm
-         JOIN user_group g ON g.id = ugm.group_id
-        WHERE ugm.user_id = $1`,
-      [userId]
-    );
-    return rows.map(
-      (row) =>
-        ({
-          id: row.id,
-          name: row.name,
-          active: row.active,
-        }) as StorageGroup
-    );
-  }
-
-  async createGroups(groups: StorageGroup[]): Promise<number[]> {
-    this.ensurePool();
-    const client = await this.pool!.connect();
-    try {
-      await client.query('BEGIN');
-      const ids: number[] = [];
-      for (const group of groups) {
-        // DO UPDATE (not DO NOTHING) so RETURNING yields the id of the
-        // existing row on a name conflict, not just freshly inserted rows.
-        const { rows } = await client.query(
-          `INSERT INTO user_group (name, active)
-           VALUES ($1, $2)
-           ON CONFLICT (name)
-           DO UPDATE SET active = EXCLUDED.active
-           RETURNING id`,
-          [group.name, group.active]
-        );
-        ids.push(rows[0].id as number);
-      }
-      await client.query('COMMIT');
-      return ids;
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
-  }
-
-  async mapUserToGroup(userId: string, groupIds: number[]): Promise<void> {
-    this.ensurePool();
-    const client = await this.pool!.connect();
-    try {
-      await client.query('BEGIN');
-      // Clear all of the user's existing memberships, then apply the new set.
-      await client.query(
-        `DELETE FROM user_group_mapping WHERE user_id = $1`,
-        [userId]
-      );
-      // Insert the desired memberships (ON CONFLICT guards duplicate ids).
-      for (const groupId of groupIds) {
-        await client.query(
-          `INSERT INTO user_group_mapping (user_id, group_id)
-           VALUES ($1, $2)
-           ON CONFLICT (user_id, group_id) DO NOTHING`,
-          [userId, groupId]
-        );
-      }
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
-  }
-
   async setDbConnections(connections: DatabaseConnection[]): Promise<void> {
     this.ensurePool();
     const client = await this.pool!.connect();
@@ -294,10 +166,10 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       await client.query('BEGIN');
       for (const connection of connections) {
         await client.query(
-          `INSERT INTO db_connection (id, group_id, data, updated_at)
+          `INSERT INTO db_connection (id, user_group, data, updated_at)
            VALUES ($1, $2, $3, NOW())
            ON CONFLICT (id)
-           DO UPDATE SET group_id = EXCLUDED.group_id, data = EXCLUDED.data, updated_at = NOW()`,
+           DO UPDATE SET user_group = EXCLUDED.user_group, data = EXCLUDED.data, updated_at = NOW()`,
           [connection.id, connection.group ?? null, JSON.stringify(connection)]
         );
       }

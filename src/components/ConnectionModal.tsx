@@ -202,8 +202,8 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
               <Label htmlFor="group" className="text-xs font-mediumr text-zinc-500">Group</Label>
             </div>
             <Select
-              value={group ? String(group) : undefined}
-              onValueChange={(value) => setGroup(Number(value))}
+              value={group ?? undefined}
+              onValueChange={(value) => setGroup(value)}
             >
               <SelectTrigger
                 id="group"
@@ -213,7 +213,7 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
               </SelectTrigger>
               <SelectContent>
                 {availableGroups.map((g) => (
-                  <SelectItem key={g.id} value={String(g.id)}>{g.name}</SelectItem>
+                  <SelectItem key={g} value={g}>{g}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
