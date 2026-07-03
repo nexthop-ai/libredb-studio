@@ -36,6 +36,7 @@ export type Role = 'admin' | 'user';
 export interface UserPayload {
   role: Role;
   username: string;
+  groups: string[]
 }
 
 export async function signJWT(payload: UserPayload) {
@@ -69,8 +70,11 @@ export async function getSession() {
   return await verifyJWT(token);
 }
 
-export async function login(role: Role, username?: string) {
-  const token = await signJWT({ role, username: username || role });
+export async function login(role: Role, groups: string[], username?: string) {
+  // Always store emails lowercased so downstream lookups (DB, ADMIN_USERS env)
+  // don't have to re-normalize.
+  const normalized = (username || role).toLowerCase();
+  const token = await signJWT({ role, username: normalized, groups });
   const cookieStore = await cookies();
   cookieStore.set('auth-token', token, {
     httpOnly: true,

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { DatabaseConnection, DatabaseType, ConnectionEnvironment, ENVIRONMENT_COLORS, SSLMode, SSLConfig, SSHTunnelConfig } from '@/lib/types';
 import { getDBConfig } from '@/lib/db-ui-config';
 import { parseConnectionString } from '@/lib/connection-string-parser';
+import { useAuth } from './use-auth';
 
 interface UseConnectionFormProps {
   isOpen: boolean;
@@ -30,6 +31,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   const [pasteInput, setPasteInput] = useState('');
   const [showPasteInput, setShowPasteInput] = useState(false);
 
+  const [group, setGroup] = useState<string | undefined>(undefined);
+  const [availableGroups, setAvailableGroups] = useState<string[]>([]);
+
   // SSL/TLS
   const [showSSL, setShowSSL] = useState(false);
   const [sslMode, setSSLMode] = useState<SSLMode>('disable');
@@ -55,6 +59,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
 
   const isEditMode = !!editConnection;
 
+  const {user: currentUser} = useAuth()
+
   // Populate form when editing
   useEffect(() => {
     if (editConnection) {
@@ -67,6 +73,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       setDatabase(editConnection.database || '');
       setConnectionString(editConnection.connectionString || '');
       setEnvironment(editConnection.environment || 'local');
+      setGroup(editConnection.group);
       if (editConnection.connectionString) {
         setMongoConnectionMode('connectionString');
       }
@@ -102,6 +109,13 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     }
   }, [editConnection]);
 
+
+  // Fetch the user's access groups while the form is open.
+  useEffect(() => {
+    if (!isOpen) return;
+    setAvailableGroups(currentUser?.groups || []);
+  }, [isOpen]);
+
   // Reset form when modal closes
   useEffect(() => {
     if (!isOpen) {
@@ -118,6 +132,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         setType('postgres');
         setHost('localhost');
         setPort('5432');
+        setGroup(undefined);
       }
     }
   }, [isOpen, editConnection]);
@@ -153,6 +168,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       createdAt: editConnection?.createdAt || new Date(),
       environment,
       color: ENVIRONMENT_COLORS[environment],
+      ...(group !== undefined ? { group } : {}),
       ...(sslConfig ? { ssl: sslConfig } : {}),
       ...(sshConfig ? { sshTunnel: sshConfig } : {}),
       ...(getDBConfig(type).showConnectionStringToggle && mongoConnectionMode === 'connectionString' ? {
@@ -168,7 +184,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   }, [
     sslMode, caCert, clientCert, clientKey,
     sshEnabled, sshHost, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase,
-    editConnection, name, type, host, port, user, password, database, environment,
+    editConnection, name, type, host, port, user, password, database, environment, group,
     mongoConnectionMode, connectionString, serviceName, instanceName,
   ]);
 
@@ -243,6 +259,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         setDatabase('');
         setConnectionString('');
         setMongoConnectionMode('host');
+        setGroup(undefined);
         setTestResult(null);
       } else {
         setTestResult({ success: false, message: result.error || 'Connection failed' });
@@ -307,6 +324,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     connectionString, setConnectionString,
     mongoConnectionMode, setMongoConnectionMode,
     environment, setEnvironment,
+    group, setGroup,
+    availableGroups,
 
     // UI state
     isTesting,

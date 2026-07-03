@@ -19,6 +19,45 @@ spec:
         app: libredb-studio
     spec:
       restartPolicy: Always
+      initContainers:
+      - name: db-migrate
+        image: ghcr.io/amacneil/dbmate:2
+        imagePullPolicy: IfNotPresent
+        args: ["--no-dump-schema", "--wait", "migrate"]
+        env:
+        - name: DBMATE_MIGRATIONS_DIR
+          value: "/migrations"
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: libredb-studio-db-credentials
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            secretKeyRef:
+              name: libredb-studio-db-credentials
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: libredb-studio-db-credentials
+              key: DB_NAME
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: libredb-studio-db-credentials
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: libredb-studio-db-credentials
+              key: DB_PASSWORD
+        - name: DATABASE_URL
+          value: "postgresql://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable"
+        volumeMounts:
+        - name: db-migrations
+          mountPath: /migrations
+          readOnly: true
       containers:
       - name: libredb-studio
         image: container-registry.sw.internal.nexthop.ai/libredb-studio:latest
@@ -103,3 +142,6 @@ spec:
       - name: seed-config
         configMap:
           name: libredb-studio-seed-connections
+      - name: db-migrations
+        configMap:
+          name: libredb-studio-migrations

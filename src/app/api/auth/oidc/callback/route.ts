@@ -3,12 +3,14 @@ import { cookies } from 'next/headers';
 import { login } from '@/lib/auth';
 import {
   getOIDCConfig,
+  getAdminUserEmails,
   discoverProvider,
   exchangeCode,
   decryptState,
   mapOIDCRole,
   getPublicOrigin,
 } from '@/lib/oidc';
+import { getStorageProvider } from '@/lib/storage/factory';
 import { logger } from '@/lib/logger';
 
 export async function GET(request: Request) {
@@ -56,16 +58,35 @@ export async function GET(request: Request) {
       return NextResponse.redirect(`${origin}/login?error=oidc_no_claims`);
     }
 
+    const adminUsers = getAdminUserEmails();
     // Map role from claims
     const role = mapOIDCRole(
-      claims as Record<string, unknown>,
-      oidcConfig.roleClaim,
-      oidcConfig.adminRoles
+      claims,
+      oidcConfig.adminGroups,
+      adminUsers
     );
 
     // Create local JWT session (same as password login)
-    const username = claims.email || claims.preferred_username || claims.sub || role;
-    await login(role, username);
+    const username = claims.email || claims.preferred_username;
+    const groups = claims.groups || [];
+    await login(role, groups, username);
+
+    // Persist the user row here — not from /api/auth/me, which is hit on
+    // every page load and would let a stale role overwrite a fresh one
+    // every few seconds.
+    if (username) {
+      try {
+        const provider = await getStorageProvider();
+        if (provider) {
+          await provider.upsertUser(username, role);
+        }
+      } catch (err) {
+        logger.warn('upsertUser failed during OIDC callback', {
+          route: 'GET /api/auth/oidc/callback',
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
 
     // Clean up state cookie
     cookieStore.delete('oidc-state');

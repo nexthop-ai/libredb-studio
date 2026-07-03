@@ -9,7 +9,7 @@ import type { ServerStorageProvider, StorageConfigResponse } from './types';
 let _provider: ServerStorageProvider | null = null;
 let _initialized = false;
 
-export type StorageProviderType = 'local' | 'sqlite' | 'postgres';
+export type StorageProviderType = 'local' | 'postgres';
 
 /**
  * Get the configured storage provider type from environment.
@@ -17,7 +17,7 @@ export type StorageProviderType = 'local' | 'sqlite' | 'postgres';
  */
 export function getStorageProviderType(): StorageProviderType {
   const env = process.env.STORAGE_PROVIDER?.toLowerCase();
-  if (env === 'sqlite' || env === 'postgres') return env;
+  if (env === 'postgres') return env;
   return 'local';
 }
 
@@ -52,11 +52,6 @@ export async function getStorageProvider(): Promise<ServerStorageProvider | null
   if (_provider && _initialized) return _provider;
 
   switch (providerType) {
-    case 'sqlite': {
-      const { SQLiteStorageProvider } = await import('./providers/sqlite');
-      _provider = new SQLiteStorageProvider();
-      break;
-    }
     case 'postgres': {
       const { PostgresStorageProvider } = await import('./providers/postgres');
       _provider = new PostgresStorageProvider();

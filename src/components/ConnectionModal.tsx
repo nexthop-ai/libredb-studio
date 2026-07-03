@@ -5,8 +5,9 @@ import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription } f
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DatabaseConnection, ConnectionEnvironment, ENVIRONMENT_COLORS, ENVIRONMENT_LABELS, SSLMode } from '@/lib/types';
-import { Database, ShieldCheck, Zap, Globe, Key, Link, CheckCircle2, XCircle, ClipboardPaste, Lock, ChevronDown, Terminal, Settings2 } from 'lucide-react';
+import { Database, ShieldCheck, Zap, Globe, Key, Link, CheckCircle2, XCircle, ClipboardPaste, Lock, ChevronDown, Terminal, Settings2, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getDBConfig } from '@/lib/db-ui-config';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -36,6 +37,8 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
     connectionString, setConnectionString,
     mongoConnectionMode, setMongoConnectionMode,
     environment, setEnvironment,
+    group, setGroup,
+    availableGroups,
 
     // UI state
     isTesting,
@@ -190,6 +193,30 @@ export function ConnectionModal({ isOpen, onClose, onConnect, editConnection, on
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Group Selector */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 mb-1">
+              <Users strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
+              <Label htmlFor="group" className="text-xs font-mediumr text-zinc-500">Group</Label>
+            </div>
+            <Select
+              value={group ?? undefined}
+              onValueChange={(value) => setGroup(value)}
+            >
+              <SelectTrigger
+                id="group"
+                className="h-10 w-full bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-xs text-zinc-200"
+              >
+                <SelectValue placeholder="No group" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableGroups.map((g) => (
+                  <SelectItem key={g} value={g}>{g}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* DB Type Selector */}

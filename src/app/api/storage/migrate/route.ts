@@ -10,6 +10,7 @@ import { getSession } from '@/lib/auth';
 import { getStorageProvider } from '@/lib/storage/factory';
 import type { StorageData } from '@/lib/storage/types';
 import { createErrorResponse } from '@/lib/api/errors';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -36,9 +37,35 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await provider.mergeData(session.username, body);
+    // Connections are stored separately from the per-user data blob.
+    const { connections, ...rest } = body;
 
-    return NextResponse.json({ ok: true, migrated: Object.keys(body) });
+    const userId = await provider.userExists(session.username);
+    if (!userId) {
+      return createErrorResponse(`user ${session.username} does not exists`, { route: 'POST /api/storage/migrate' });
+    }
+
+    // Connections are shared, admin-managed records. Silently drop them
+    // for non-admins so the rest of their per-user blob still migrates.
+    const migrated = Object.keys(body);
+    if (connections && connections.length > 0) {
+      if (await provider.isAdmin(userId)) {
+        await provider.setDbConnections(connections);
+      } else {
+        logger.info('Skipping connection migration for non-admin user', {
+          route: 'POST /api/storage/migrate',
+          userId,
+        });
+        const idx = migrated.indexOf('connections');
+        if (idx >= 0) migrated.splice(idx, 1);
+      }
+    }
+
+    // Atomic JSONB merge — concurrent migrations from sibling tabs can't
+    // clobber sibling collections.
+    await provider.mergeUserData(userId, rest as Partial<StorageData>);
+
+    return NextResponse.json({ ok: true, migrated });
   } catch (error) {
     return createErrorResponse(error, { route: 'POST /api/storage/migrate' });
   }

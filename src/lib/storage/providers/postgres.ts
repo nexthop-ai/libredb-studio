@@ -3,9 +3,13 @@
  * Uses the existing `pg` package (already a project dependency).
  */
 
-import type { ServerStorageProvider, StorageCollection, StorageData } from '../types';
-import { STORAGE_COLLECTIONS } from '../types';
+import type { ServerStorageProvider, StorageData, StorageCollection } from '../types';
+import type { DatabaseConnection } from '@/lib/types';
 import { logger } from '@/lib/logger';
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
 
 let Pool: typeof import('pg').Pool;
 
@@ -38,17 +42,12 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       ssl: this.buildSSLConfig(),
     });
 
-    // Create table
+    // The `app_user` and `db_connection` tables are created by the deploy-time
+    // migration (db-migrate init container running migrations/0001), not here.
+    // We only probe the connection so a misconfigured URL (e.g. missing
+    // sslmode) fails fast at startup instead of on the first request.
     try {
-      await this.pool.query(`
-        CREATE TABLE IF NOT EXISTS user_storage (
-          user_id    TEXT NOT NULL,
-          collection TEXT NOT NULL,
-          data       TEXT NOT NULL,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          PRIMARY KEY (user_id, collection)
-        )
-      `);
+      await this.pool.query('SELECT 1');
     } catch (error) {
       if (error instanceof Error && error.message.includes('does not support SSL')) {
         throw new Error(
@@ -61,75 +60,121 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     }
   }
 
-  async getAllData(userId: string): Promise<Partial<StorageData>> {
+  async getUserData(userId: string, groups: string[] = []): Promise<Partial<StorageData>> {
     this.ensurePool();
-    const { rows } = await this.pool!.query(
-      'SELECT collection, data FROM user_storage WHERE user_id = $1',
+
+    // The per-user data blob, fetched on its own. `pg` parses JSONB into a
+    // JS object automatically, so no JSON.parse is needed.
+    const { rows: userRows } = await this.pool!.query(
+      `SELECT data AS user_data FROM app_user WHERE id = $1`,
       [userId]
     );
 
     const result: Partial<StorageData> = {};
-    for (const row of rows) {
-      try {
-        (result as Record<string, unknown>)[row.collection] = JSON.parse(
-          row.data
-        );
-      } catch {
-        logger.warn('Skipping corrupted storage data', { provider: 'postgres', collection: row.collection });
+    if (userRows.length === 0) return result;
+
+    const userData = userRows[0].user_data;
+    if (userData && typeof userData === 'object') {
+      Object.assign(result, userData as Partial<StorageData>);
+    } else {
+      logger.warn('Skipping corrupted user storage data', { provider: 'postgres', userId });
+    }
+
+    // Connections the caller can reach: those whose `user_group` matches one of
+    // the groups supplied by the identity provider, plus ungrouped (NULL) ones,
+    // which are visible to everyone.
+    const { rows: connRows } = await this.pool!.query(
+      `SELECT data AS connection_data
+         FROM db_connection
+        WHERE user_group IS NULL OR user_group = ANY($1)`,
+      [groups]
+    );
+
+    const connections: DatabaseConnection[] = [];
+    for (const row of connRows) {
+      if (row.connection_data && typeof row.connection_data === 'object') {
+        connections.push(row.connection_data as DatabaseConnection);
+      } else {
+        logger.warn('Skipping corrupted db connection data', { provider: 'postgres' });
       }
     }
+    result.connections = connections;
+
     return result;
   }
 
-  async getCollection<K extends StorageCollection>(
-    userId: string,
-    collection: K
-  ): Promise<StorageData[K] | null> {
+  async upsertUser(email: string, role: 'admin' | 'user'): Promise<string> {
     this.ensurePool();
     const { rows } = await this.pool!.query(
-      'SELECT data FROM user_storage WHERE user_id = $1 AND collection = $2',
-      [userId, collection]
+      `INSERT INTO app_user (email, data, role)
+       VALUES ($1, '{}'::jsonb, $2)
+       ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role
+       RETURNING id`,
+      [normalizeEmail(email), role]
+    );
+    return rows[0].id as string;
+  }
+
+  async userExists(
+    email: string
+  ): Promise<string | null> {
+    this.ensurePool();
+    const { rows } = await this.pool!.query(
+      `SELECT id, email FROM app_user WHERE email = $1`,
+      [normalizeEmail(email)]
     );
     if (rows.length === 0) return null;
-    try {
-      return JSON.parse(rows[0].data) as StorageData[K];
-    } catch {
-      logger.warn('Corrupted data in storage collection', { provider: 'postgres', collection });
-      return null;
+    if (rows.length > 1) {
+      throw new Error(`Multiple users found for email: ${email}`);
     }
+
+    return rows[0].id as string;
   }
 
-  async setCollection<K extends StorageCollection>(
-    userId: string,
-    collection: K,
-    data: StorageData[K]
-  ): Promise<void> {
+  async isAdmin(userId: string): Promise<boolean> {
     this.ensurePool();
-    await this.pool!.query(
-      `INSERT INTO user_storage (user_id, collection, data, updated_at)
-       VALUES ($1, $2, $3, NOW())
-       ON CONFLICT (user_id, collection)
-       DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-      [userId, collection, JSON.stringify(data)]
+    const { rows } = await this.pool!.query(
+      `SELECT email, role FROM app_user WHERE id = $1`,
+      [userId]
     );
+    if (rows.length === 0) return false;
+    if (rows[0].role === 'admin') return true;
+
+    const adminEmails = (process.env.ADMIN_USERS ?? '')
+      .split(',')
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean);
+    return adminEmails.includes(String(rows[0].email).toLowerCase());
   }
 
-  async mergeData(userId: string, data: Partial<StorageData>): Promise<void> {
+  /**
+   * Replace the entire set of db connections with `connections` in one
+   * transaction: rows whose `id` is not in the new set are deleted, the
+   * rest are upserted. Callers MUST gate this on admin authorization —
+   * writes here are not user-scoped.
+   */
+  async setDbConnections(connections: DatabaseConnection[]): Promise<void> {
     this.ensurePool();
     const client = await this.pool!.connect();
     try {
       await client.query('BEGIN');
-      for (const collection of STORAGE_COLLECTIONS) {
-        const collectionData = (data as Record<string, unknown>)[collection];
-        if (collectionData !== undefined) {
-          await client.query(
-            `INSERT INTO user_storage (user_id, collection, data, updated_at)
-             VALUES ($1, $2, $3, NOW())
-             ON CONFLICT (user_id, collection)
-             DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-            [userId, collection, JSON.stringify(collectionData)]
-          );
-        }
+      const ids = connections.map((c) => c.id);
+      if (ids.length === 0) {
+        await client.query(`DELETE FROM db_connection`);
+      } else {
+        await client.query(
+          `DELETE FROM db_connection WHERE id <> ALL($1)`,
+          [ids]
+        );
+      }
+      for (const connection of connections) {
+        await client.query(
+          `INSERT INTO db_connection (id, user_group, data, updated_at)
+           VALUES ($1, $2, $3::jsonb, NOW())
+           ON CONFLICT (id)
+           DO UPDATE SET user_group = EXCLUDED.user_group, data = EXCLUDED.data, updated_at = NOW()`,
+          [connection.id, connection.group ?? null, JSON.stringify(connection)]
+        );
       }
       await client.query('COMMIT');
     } catch (err) {
@@ -139,6 +184,53 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       client.release();
     }
   }
+
+  /** Admin-only: delete a single connection by id. Returns true if a row was removed. */
+  async deleteDbConnection(id: string): Promise<boolean> {
+    this.ensurePool();
+    const { rowCount } = await this.pool!.query(
+      `DELETE FROM db_connection WHERE id = $1`,
+      [id]
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  /**
+   * Atomically replace a single top-level key in the user's `data` JSONB.
+   * Single-statement `jsonb_set` avoids the read-modify-write race that
+   * would otherwise let two concurrent tab writes clobber each other.
+   */
+  async setUserDataCollection(
+    userId: string,
+    collection: StorageCollection,
+    data: unknown
+  ): Promise<void> {
+    this.ensurePool();
+    await this.pool!.query(
+      `UPDATE app_user
+          SET data = jsonb_set(COALESCE(data, '{}'::jsonb), ARRAY[$2], $3::jsonb, true),
+              updated_at = NOW()
+        WHERE id = $1`,
+      [userId, collection, JSON.stringify(data)]
+    );
+  }
+
+  /**
+   * Atomically merge multiple collections into the user's `data` JSONB
+   * (right side wins on conflict, matching the localStorage-migration intent).
+   */
+  async mergeUserData(userId: string, data: Partial<StorageData>): Promise<void> {
+    this.ensurePool();
+    if (Object.keys(data).length === 0) return;
+    await this.pool!.query(
+      `UPDATE app_user
+          SET data = COALESCE(data, '{}'::jsonb) || $2::jsonb,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [userId, JSON.stringify(data)]
+    );
+  }
+
 
   async isHealthy(): Promise<boolean> {
     try {

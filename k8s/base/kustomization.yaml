@@ -7,6 +7,28 @@ resources:
 - deployment.yaml
 - service.yaml
 
+# Storage-schema migrations (dbmate format), mounted at /migrations into the
+# db-migrate init container in deployment.yaml. That container runs `dbmate
+# migrate`, which applies every file here in version order and records each in
+# dbmate's schema_migrations ledger, so adding a migration is a one-line change
+# HERE ONLY — deployment.yaml never changes.
+#
+# Files are referenced directly from the canonical service-root migrations/ dir
+# (single source of truth — no vendored copy). This reaches outside base/, which
+# requires `kustomize build --load-restrictor=LoadRestrictionsNone` — already set
+# by `ng service deploy` (nhtools/ng/service/deploy.go) and .github/workflows/
+# k8s-pr.yml, and used the same way by nhtools/qpn.
+#
+# To add a migration: `DBMATE_MIGRATIONS_DIR=./migrations dbmate new <name>` at
+# the service root, fill in migrate:up/down (idempotent — see migrations/
+# README.md), then add its ../../migrations/<file> path below. The content-hash
+# suffix rolls the pods whenever this set changes.
+configMapGenerator:
+- name: libredb-studio-migrations
+  namespace: libredb-studio
+  files:
+  - ../../migrations/20260703085821_user_storage_to_app_user.sql
+
 labels:
 - pairs:
     app: libredb-studio

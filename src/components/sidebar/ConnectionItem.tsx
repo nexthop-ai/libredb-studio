@@ -2,7 +2,7 @@ import React from 'react';
 import { DatabaseConnection, ENVIRONMENT_LABELS } from '@/lib/types';
 import { Lock, Trash2, Pencil } from 'lucide-react';
 import { getDBIcon } from '@/lib/db-ui-config';
-import { Button } from '@/components/ui/button';
+import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
 
@@ -21,6 +21,8 @@ export const ConnectionItem = React.memo(function ConnectionItem({
   onDelete,
   onEdit,
 }: ConnectionItemProps) {
+  const { user } = useAuth();
+
   return (
     <motion.div
       initial={false}
@@ -73,7 +75,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
               <Lock strokeWidth={1.5} className="w-3 h-3" />
             </div>
           )}
-          {!conn.managed && onEdit && (
+          { user?.role == 'admin' && !conn.managed && onEdit && (
             <button
               className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-blue-500/20 hover:text-blue-400"
               onClick={(e) => {
@@ -84,7 +86,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
               <Pencil strokeWidth={1.5} className="w-3 h-3" />
             </button>
           )}
-          {!conn.managed && (
+          { user?.role == 'admin' && !conn.managed && (
             <button
               className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 hover:text-red-400"
               onClick={(e) => {

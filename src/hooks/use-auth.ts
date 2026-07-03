@@ -6,6 +6,7 @@ import { useToast } from '@/hooks/use-toast';
 
 interface AuthUser {
   role?: string;
+  groups?: string[];
 }
 
 export function useAuth() {

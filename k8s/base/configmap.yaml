@@ -11,9 +11,14 @@ data:
 
   # Authentication: email/password (local) by default. Switch to "oidc"
   # and supply OIDC_* values via the libredb-studio-secrets secret to use SSO.
-  NEXT_PUBLIC_AUTH_PROVIDER: "local"
+  NEXT_PUBLIC_AUTH_PROVIDER: "oidc"
+  OIDC_ISSUER: https://sso.nexthop.ai
+  OIDC_SCOPE: openid profile email groups
+  
   ADMIN_EMAIL: "admin@nexthop.ai"
   USER_EMAIL: "user@nexthop.ai"
+  ADMIN_USERS: "bhupendra@nexthop.ai, jeffc@nexthop.ai"
+  OIDC_ADMIN_GROUPS: "not_yet_configured"
 
   # LLM provider defaults. The API key (LLM_API_KEY) is supplied via the
   # libredb-studio-secrets secret.

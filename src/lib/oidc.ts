@@ -9,8 +9,7 @@ export interface OIDCConfig {
   clientId: string;
   clientSecret: string;
   scope: string;
-  roleClaim: string;
-  adminRoles: string[];
+  adminGroups: string[];
 }
 
 export interface OIDCState {
@@ -37,12 +36,22 @@ export function getOIDCConfig(): OIDCConfig {
     clientId,
     clientSecret,
     scope: process.env.OIDC_SCOPE || 'openid profile email',
-    roleClaim: process.env.OIDC_ROLE_CLAIM || '',
-    adminRoles: (process.env.OIDC_ADMIN_ROLES || 'admin')
+    adminGroups: (process.env.OIDC_ADMIN_GROUPS || 'does_not_exists')
       .split(',')
       .map((r) => r.trim())
       .filter(Boolean),
   };
+}
+
+/**
+ * Parse the `ADMIN_USERS` env list (comma-separated emails) into a
+ * lowercased, trimmed array. Returns `[]` when unset so callers don't crash.
+ */
+export function getAdminUserEmails(): string[] {
+  return (process.env.ADMIN_USERS ?? '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 // ─── Discovery (cached) ────────────────────────────────────────────────────
@@ -114,6 +123,7 @@ export interface OIDCClaims {
   sub: string;
   email?: string;
   preferred_username?: string;
+  groups?: string[]
   [claim: string]: unknown;
 }
 
@@ -143,38 +153,27 @@ export async function exchangeCode(
 // ─── Role Mapping ──────────────────────────────────────────────────────────
 
 /**
- * Extract role from OIDC claims using configured claim path.
- * Supports dot-notation for nested claims (e.g. "realm_access.roles").
- * Returns 'admin' if any claim value matches OIDC_ADMIN_ROLES, otherwise 'user'.
+ * Resolve the caller's role from OIDC claims. Returns `'admin'` if the
+ * (lowercased) email is in `adminUsers`, or if any claim group is in
+ * `adminGroups`; otherwise `'user'`.
+ *
+ * Caller is responsible for passing `adminUsers` already lowercased
+ * (use {@link getAdminUserEmails}).
  */
 export function mapOIDCRole(
-  claims: Record<string, unknown>,
-  roleClaim: string,
-  adminRoles: string[]
+  claims: OIDCClaims,
+  adminGroups: string[],
+  adminUsers: string[]
 ): 'admin' | 'user' {
-  if (!roleClaim) return 'user';
-
-  // Navigate dot-notation path
-  const parts = roleClaim.split('.');
-  let value: unknown = claims;
-  for (const part of parts) {
-    if (value == null || typeof value !== 'object') return 'user';
-    value = (value as Record<string, unknown>)[part];
+  const groups = claims.groups;
+  const email = claims.email?.toLowerCase();
+  if (email && adminUsers.includes(email)) {
+    return 'admin';
   }
-
-  if (value == null) return 'user';
-
-  // Normalize to array of strings
-  const values: string[] = Array.isArray(value)
-    ? value.map(String)
-    : [String(value)];
-
-  // Check if any value matches admin roles
-  const isAdmin = values.some((v) =>
-    adminRoles.some((ar) => v.toLowerCase() === ar.toLowerCase())
-  );
-
-  return isAdmin ? 'admin' : 'user';
+  if (groups && groups.some((g) => adminGroups.includes(g))) {
+    return 'admin';
+  }
+  return 'user';
 }
 
 // ─── State Cookie Encryption ───────────────────────────────────────────────
@@ -232,7 +231,6 @@ export function buildLogoutUrl(returnTo: string): string | null {
   try {
     const config = getOIDCConfig();
     const issuerUrl = new URL(config.issuer);
-    const roleClaim = config.roleClaim;
 
     // Auth0 uses /v2/logout
     if (issuerUrl.hostname === 'auth0.com' || issuerUrl.hostname.endsWith('.auth0.com')) {
@@ -243,7 +241,7 @@ export function buildLogoutUrl(returnTo: string): string | null {
     }
 
     // Zitadel RP-Initiated Logout
-    if (roleClaim.includes('zitadel')) {
+    if (issuerUrl.hostname.includes('zitadel')) {
       const logoutUrl = new URL('/oidc/v1/end_session', config.issuer);
       logoutUrl.searchParams.set('client_id', config.clientId);
       logoutUrl.searchParams.set('post_logout_redirect_uri', returnTo);
