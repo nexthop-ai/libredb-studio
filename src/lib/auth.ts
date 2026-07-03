@@ -71,7 +71,10 @@ export async function getSession() {
 }
 
 export async function login(role: Role, groups: string[], username?: string) {
-  const token = await signJWT({ role, username: username || role, groups});
+  // Always store emails lowercased so downstream lookups (DB, ADMIN_USERS env)
+  // don't have to re-normalize.
+  const normalized = (username || role).toLowerCase();
+  const token = await signJWT({ role, username: normalized, groups });
   const cookieStore = await cookies();
   cookieStore.set('auth-token', token, {
     httpOnly: true,

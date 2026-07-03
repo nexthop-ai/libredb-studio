@@ -43,8 +43,15 @@ export function getOIDCConfig(): OIDCConfig {
   };
 }
 
-export function getAdminUserEmail(): string[] {
-  return process.env.ADMIN_USERS.split(',').map((email: string) => email.trim()).filter(Boolean);
+/**
+ * Parse the `ADMIN_USERS` env list (comma-separated emails) into a
+ * lowercased, trimmed array. Returns `[]` when unset so callers don't crash.
+ */
+export function getAdminUserEmails(): string[] {
+  return (process.env.ADMIN_USERS ?? '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 // ─── Discovery (cached) ────────────────────────────────────────────────────
@@ -146,19 +153,20 @@ export async function exchangeCode(
 // ─── Role Mapping ──────────────────────────────────────────────────────────
 
 /**
- * Extract role from OIDC claims using configured claim path.
- * Supports dot-notation for nested claims (e.g. "realm_access.roles").
- * Returns 'admin' if any claim value matches OIDC_ADMIN_ROLES, otherwise 'user'.
+ * Resolve the caller's role from OIDC claims. Returns `'admin'` if the
+ * (lowercased) email is in `adminUsers`, or if any claim group is in
+ * `adminGroups`; otherwise `'user'`.
+ *
+ * Caller is responsible for passing `adminUsers` already lowercased
+ * (use {@link getAdminUserEmails}).
  */
 export function mapOIDCRole(
   claims: OIDCClaims,
   adminGroups: string[],
   adminUsers: string[]
 ): 'admin' | 'user' {
-
-  // Navigate dot-notation path
   const groups = claims.groups;
-  const email = claims.email;
+  const email = claims.email?.toLowerCase();
   if (email && adminUsers.includes(email)) {
     return 'admin';
   }
@@ -223,7 +231,6 @@ export function buildLogoutUrl(returnTo: string): string | null {
   try {
     const config = getOIDCConfig();
     const issuerUrl = new URL(config.issuer);
-    const roleClaim = config.roleClaim;
 
     // Auth0 uses /v2/logout
     if (issuerUrl.hostname === 'auth0.com' || issuerUrl.hostname.endsWith('.auth0.com')) {
@@ -234,7 +241,7 @@ export function buildLogoutUrl(returnTo: string): string | null {
     }
 
     // Zitadel RP-Initiated Logout
-    if (roleClaim.includes('zitadel')) {
+    if (issuerUrl.hostname.includes('zitadel')) {
       const logoutUrl = new URL('/oidc/v1/end_session', config.issuer);
       logoutUrl.searchParams.set('client_id', config.clientId);
       logoutUrl.searchParams.set('post_logout_redirect_uri', returnTo);

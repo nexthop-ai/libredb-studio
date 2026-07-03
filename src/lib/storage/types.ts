@@ -42,8 +42,7 @@ export const STORAGE_COLLECTIONS: StorageCollection[] = [
 ];
 
 /**
- * Server-side storage provider interface.
- * Implements the Strategy Pattern — SQLite and PostgreSQL both implement this.
+ * Server-side storage provider interface (PostgreSQL-backed).
  */
 export interface ServerStorageProvider {
   /** Create tables if they don't exist */
@@ -52,7 +51,7 @@ export interface ServerStorageProvider {
    * Get a user's data merged with the db connections they can access.
    *
    * Returns the `data` blob from the `app_user` table plus the connections
-   * whose `group` matches one of the `groups` supplied by the identity
+   * whose `user_group` matches one of the `groups` supplied by the identity
    * provider (Okta), plus ungrouped connections which are visible to all.
    * `userId` is the `app_user.id` surrogate key. The result is a
    * `Partial<StorageData>`.
@@ -73,12 +72,24 @@ export interface ServerStorageProvider {
    * if their email is in the `ADMIN_USERS` env list.
    */
   isAdmin(userId: string): Promise<boolean>;
-  /** Upsert db connections (each carries its own `group` string) into the `db_connection` table */
+  /**
+   * Replace the entire set of db connections — rows whose `id` is not in the
+   * payload are deleted, others are upserted. Admin-only at the API layer.
+   */
   setDbConnections(connections: DatabaseConnection[]): Promise<void>;
-  /** Set a user's `data` blob in the `user` table (keyed by `user.id`) */
-  setUserData(userId: string, data: StorageData): Promise<void>;
-  // /** Merge multiple collections (used for migration) */
-  // mergeData(userId: string, data: Partial<StorageData>): Promise<void>;
+  /** Delete a single db connection by id; returns true if a row was removed. Admin-only. */
+  deleteDbConnection(id: string): Promise<boolean>;
+  /**
+   * Atomically replace a single top-level collection in the user's data blob
+   * (avoids the read-modify-write race of full-blob updates).
+   */
+  setUserDataCollection(
+    userId: string,
+    collection: StorageCollection,
+    data: unknown
+  ): Promise<void>;
+  /** Atomically merge multiple collections into the user's data blob (used for migration) */
+  mergeUserData(userId: string, data: Partial<StorageData>): Promise<void>;
   /** Health check */
   isHealthy(): Promise<boolean>;
   /** Cleanup resources */
@@ -87,7 +98,7 @@ export interface ServerStorageProvider {
 
 /** Storage config returned by /api/storage/config */
 export interface StorageConfigResponse {
-  provider: 'local' | 'sqlite' | 'postgres';
+  provider: 'local' | 'postgres';
   serverMode: boolean;
 }
 

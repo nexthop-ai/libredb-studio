@@ -3,9 +3,13 @@
  * Uses the existing `pg` package (already a project dependency).
  */
 
-import type { ServerStorageProvider, StorageData } from '../types';
+import type { ServerStorageProvider, StorageData, StorageCollection } from '../types';
 import type { DatabaseConnection } from '@/lib/types';
 import { logger } from '@/lib/logger';
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
 
 let Pool: typeof import('pg').Pool;
 
@@ -41,13 +45,14 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     // Create tables
     try {
       // Per-user data blob (StorageData minus connections). `id` is the
-      // surrogate key used everywhere; `email` is a unique natural key.
-      // `role` records whether the user is an admin or a regular user.
+      // surrogate key used everywhere; `email` is a unique natural key
+      // stored lowercase. `data` is JSONB so partial updates can use
+      // `jsonb_set` / `||` atomically (no read-modify-write race).
       await this.pool.query(`
         CREATE TABLE IF NOT EXISTS app_user (
           id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           email      TEXT NOT NULL UNIQUE,
-          data       TEXT NOT NULL,
+          data       JSONB NOT NULL DEFAULT '{}'::jsonb,
           role       TEXT NOT NULL DEFAULT 'user',
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
@@ -57,7 +62,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
         CREATE TABLE IF NOT EXISTS db_connection (
           id         TEXT PRIMARY KEY,
           user_group TEXT,
-          data       TEXT NOT NULL,
+          data       JSONB NOT NULL,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
@@ -76,7 +81,8 @@ export class PostgresStorageProvider implements ServerStorageProvider {
   async getUserData(userId: string, groups: string[] = []): Promise<Partial<StorageData>> {
     this.ensurePool();
 
-    // The per-user data blob, fetched on its own.
+    // The per-user data blob, fetched on its own. `pg` parses JSONB into a
+    // JS object automatically, so no JSON.parse is needed.
     const { rows: userRows } = await this.pool!.query(
       `SELECT data AS user_data FROM app_user WHERE id = $1`,
       [userId]
@@ -85,9 +91,10 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     const result: Partial<StorageData> = {};
     if (userRows.length === 0) return result;
 
-    try {
-      Object.assign(result, JSON.parse(userRows[0].user_data));
-    } catch {
+    const userData = userRows[0].user_data;
+    if (userData && typeof userData === 'object') {
+      Object.assign(result, userData as Partial<StorageData>);
+    } else {
       logger.warn('Skipping corrupted user storage data', { provider: 'postgres', userId });
     }
 
@@ -103,10 +110,9 @@ export class PostgresStorageProvider implements ServerStorageProvider {
 
     const connections: DatabaseConnection[] = [];
     for (const row of connRows) {
-      if (!row.connection_data) continue;
-      try {
-        connections.push(JSON.parse(row.connection_data) as DatabaseConnection);
-      } catch {
+      if (row.connection_data && typeof row.connection_data === 'object') {
+        connections.push(row.connection_data as DatabaseConnection);
+      } else {
         logger.warn('Skipping corrupted db connection data', { provider: 'postgres' });
       }
     }
@@ -119,10 +125,10 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     this.ensurePool();
     const { rows } = await this.pool!.query(
       `INSERT INTO app_user (email, data, role)
-       VALUES ($1, '{}', $2)
+       VALUES ($1, '{}'::jsonb, $2)
        ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role
        RETURNING id`,
-      [email, role]
+      [normalizeEmail(email), role]
     );
     return rows[0].id as string;
   }
@@ -133,13 +139,13 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     this.ensurePool();
     const { rows } = await this.pool!.query(
       `SELECT id, email FROM app_user WHERE email = $1`,
-      [email]
+      [normalizeEmail(email)]
     );
     if (rows.length === 0) return null;
     if (rows.length > 1) {
-      throw "Multiple users found for email: " + email;
+      throw new Error(`Multiple users found for email: ${email}`);
     }
-    
+
     return rows[0].id as string;
   }
 
@@ -159,15 +165,30 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     return adminEmails.includes(String(rows[0].email).toLowerCase());
   }
 
+  /**
+   * Replace the entire set of db connections with `connections` in one
+   * transaction: rows whose `id` is not in the new set are deleted, the
+   * rest are upserted. Callers MUST gate this on admin authorization —
+   * writes here are not user-scoped.
+   */
   async setDbConnections(connections: DatabaseConnection[]): Promise<void> {
     this.ensurePool();
     const client = await this.pool!.connect();
     try {
       await client.query('BEGIN');
+      const ids = connections.map((c) => c.id);
+      if (ids.length === 0) {
+        await client.query(`DELETE FROM db_connection`);
+      } else {
+        await client.query(
+          `DELETE FROM db_connection WHERE id <> ALL($1)`,
+          [ids]
+        );
+      }
       for (const connection of connections) {
         await client.query(
           `INSERT INTO db_connection (id, user_group, data, updated_at)
-           VALUES ($1, $2, $3, NOW())
+           VALUES ($1, $2, $3::jsonb, NOW())
            ON CONFLICT (id)
            DO UPDATE SET user_group = EXCLUDED.user_group, data = EXCLUDED.data, updated_at = NOW()`,
           [connection.id, connection.group ?? null, JSON.stringify(connection)]
@@ -182,13 +203,47 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     }
   }
 
-  async setUserData(userId: string, data: StorageData): Promise<void> {
+  /** Admin-only: delete a single connection by id. Returns true if a row was removed. */
+  async deleteDbConnection(id: string): Promise<boolean> {
     this.ensurePool();
-    // `email` is NOT NULL, so a row must already exist (created with its email
-    // elsewhere); this only refreshes the data blob keyed by the surrogate id.
+    const { rowCount } = await this.pool!.query(
+      `DELETE FROM db_connection WHERE id = $1`,
+      [id]
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  /**
+   * Atomically replace a single top-level key in the user's `data` JSONB.
+   * Single-statement `jsonb_set` avoids the read-modify-write race that
+   * would otherwise let two concurrent tab writes clobber each other.
+   */
+  async setUserDataCollection(
+    userId: string,
+    collection: StorageCollection,
+    data: unknown
+  ): Promise<void> {
+    this.ensurePool();
     await this.pool!.query(
       `UPDATE app_user
-          SET data = $2, updated_at = NOW()
+          SET data = jsonb_set(COALESCE(data, '{}'::jsonb), ARRAY[$2], $3::jsonb, true),
+              updated_at = NOW()
+        WHERE id = $1`,
+      [userId, collection, JSON.stringify(data)]
+    );
+  }
+
+  /**
+   * Atomically merge multiple collections into the user's `data` JSONB
+   * (right side wins on conflict, matching the localStorage-migration intent).
+   */
+  async mergeUserData(userId: string, data: Partial<StorageData>): Promise<void> {
+    this.ensurePool();
+    if (Object.keys(data).length === 0) return;
+    await this.pool!.query(
+      `UPDATE app_user
+          SET data = COALESCE(data, '{}'::jsonb) || $2::jsonb,
+              updated_at = NOW()
         WHERE id = $1`,
       [userId, JSON.stringify(data)]
     );
