@@ -42,30 +42,12 @@ export class PostgresStorageProvider implements ServerStorageProvider {
       ssl: this.buildSSLConfig(),
     });
 
-    // Create tables
+    // The `app_user` and `db_connection` tables are created by the deploy-time
+    // migration (db-migrate init container running migrations/0001), not here.
+    // We only probe the connection so a misconfigured URL (e.g. missing
+    // sslmode) fails fast at startup instead of on the first request.
     try {
-      // Per-user data blob (StorageData minus connections). `id` is the
-      // surrogate key used everywhere; `email` is a unique natural key
-      // stored lowercase. `data` is JSONB so partial updates can use
-      // `jsonb_set` / `||` atomically (no read-modify-write race).
-      await this.pool.query(`
-        CREATE TABLE IF NOT EXISTS app_user (
-          id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          email      TEXT NOT NULL UNIQUE,
-          data       JSONB NOT NULL DEFAULT '{}'::jsonb,
-          role       TEXT NOT NULL DEFAULT 'user',
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-
-      await this.pool.query(`
-        CREATE TABLE IF NOT EXISTS db_connection (
-          id         TEXT PRIMARY KEY,
-          user_group TEXT,
-          data       JSONB NOT NULL,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
+      await this.pool.query('SELECT 1');
     } catch (error) {
       if (error instanceof Error && error.message.includes('does not support SSL')) {
         throw new Error(
